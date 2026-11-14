@@ -245,7 +245,9 @@ class TierTierValidation(CommonTierValidation):
         ctx = res.get("context")
         # Default comment pre-filled from tier definition
         self.assertEqual(ctx.get("default_comment"), "Approved")
-        wizard = Form(self.env["comment.wizard"].with_context(**ctx))
+        wizard = Form(
+            self.env["comment.wizard"].with_user(self.test_user_1).with_context(**ctx)
+        )
         self.assertEqual(wizard.comment, "Approved")
 
         # Clear default approve comment
@@ -254,7 +256,9 @@ class TierTierValidation(CommonTierValidation):
         res = record.validate_tier()
         ctx = res.get("context")
         self.assertEqual(ctx.get("default_comment"), "")
-        wizard = Form(self.env["comment.wizard"].with_context(**ctx))
+        wizard = Form(
+            self.env["comment.wizard"].with_user(self.test_user_1).with_context(**ctx)
+        )
         self.assertEqual(wizard.comment, "")
         wizard.comment = "Test Comment"
         wiz = wizard.save()
@@ -289,7 +293,9 @@ class TierTierValidation(CommonTierValidation):
         record = test_record.with_user(self.test_user_1.id)
         res = record.reject_tier()  # Rejection
         ctx = res.get("context")
-        wizard = Form(self.env["comment.wizard"].with_context(**ctx))
+        wizard = Form(
+            self.env["comment.wizard"].with_user(self.test_user_1).with_context(**ctx)
+        )
         wizard.comment = "Test Comment"
         wiz = wizard.save()
         wiz.add_comment()
