@@ -522,7 +522,7 @@ class TierValidation(models.AbstractModel):
                     lambda r: r.status in ("waiting", "pending")
                 ):
                     rec._update_counter({"review_deleted": True})
-                rec.mapped("review_ids").unlink()
+                rec.mapped("review_ids")._with_review_token().unlink()
 
     def _allow_to_remove_reviews(self, values):
         """Method for deciding whether the elimination of revisions is necessary."""
@@ -552,6 +552,9 @@ class TierValidation(models.AbstractModel):
 
     def _validate_tier(self, tiers=False):
         self.ensure_one()
+        self.check_access("read")
+        if tiers and tiers - self.review_ids:
+            raise ValidationError(self.env._("Reviews must belong to this document."))
         tier_reviews = tiers or self.review_ids
         waiting_reviews = tier_reviews.filtered(
             lambda r: (
@@ -561,7 +564,7 @@ class TierValidation(models.AbstractModel):
             )
         )
         if waiting_reviews:
-            waiting_reviews.write(
+            waiting_reviews._with_review_token().write(
                 {
                     "status": "pending",
                 }
@@ -580,7 +583,7 @@ class TierValidation(models.AbstractModel):
             else:
                 break
 
-        user_reviews.write(
+        user_reviews._with_review_token().write(
             {
                 "status": "approved",
                 "done_by": self.env.user.id,
@@ -720,13 +723,16 @@ class TierValidation(models.AbstractModel):
 
     def _rejected_tier(self, tiers=False):
         self.ensure_one()
+        self.check_access("read")
+        if tiers and tiers - self.review_ids:
+            raise ValidationError(self.env._("Reviews must belong to this document."))
         tier_reviews = tiers or self.review_ids
         user_reviews = tier_reviews.filtered(
             lambda r: (
                 r.status in ("waiting", "pending") and self.env.user in r.reviewer_ids
             )
         )
-        user_reviews.write(
+        user_reviews._with_review_token().write(
             {
                 "status": "rejected",
                 "done_by": self.env.user.id,
@@ -745,7 +751,7 @@ class TierValidation(models.AbstractModel):
                 lambda r: r.status == "waiting" and r.approve_sequence
             )
             if waiting_reviews:
-                waiting_reviews.write({"status": "cancel"})
+                waiting_reviews._with_review_token().write({"status": "cancel"})
             reviews_to_notify = self.review_ids.filtered(
                 lambda r: r.status == "pending" and r.definition_id.notify_on_rejected
             )
@@ -852,8 +858,9 @@ class TierValidation(models.AbstractModel):
         return company_id
 
     def request_validation(self):
+        self.check_access("write")
         td_obj = self.env["tier.definition"]
-        tr_obj = self.env["tier.review"]
+        tr_obj = self.env["tier.review"]._with_review_token()
         vals_list = []
         for rec in self:
             if rec._check_state_from_condition() and rec.need_validation:
@@ -893,6 +900,7 @@ class TierValidation(models.AbstractModel):
             )
 
     def restart_validation(self):
+        self.check_access("write")
         for rec in self:
             partners_to_notify_ids = False
             if getattr(rec, self._state_field) in self._state_from:
@@ -916,7 +924,7 @@ class TierValidation(models.AbstractModel):
                 # notification itself is only sent at commit.
                 if to_update_counter:
                     rec._update_counter({"review_deleted": True})
-                rec.mapped("review_ids").unlink()
+                rec.mapped("review_ids")._with_review_token().unlink()
             if partners_to_notify_ids:
                 subscribe = "message_subscribe"
                 reviews_to_notify = rec.review_ids.filtered(
@@ -965,7 +973,7 @@ class TierValidation(models.AbstractModel):
         pending["message"].update(review_counter)
 
     def unlink(self):
-        self.mapped("review_ids").unlink()
+        self.mapped("review_ids")._with_review_token().unlink()
         return super().unlink()
 
     def _add_tier_validation_buttons(self, node, params):

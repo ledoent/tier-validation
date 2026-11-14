@@ -2,6 +2,7 @@
 # License AGPL-3.0 or later (https://www.gnu.org/licenses/agpl).
 
 from odoo import fields, models
+from odoo.exceptions import AccessError, ValidationError
 
 
 class CommentWizard(models.TransientModel):
@@ -17,7 +18,31 @@ class CommentWizard(models.TransientModel):
     def add_comment(self):
         self.ensure_one()
         rec = self.env[self.res_model].browse(self.res_id)
-        self.review_ids.write({"comment": self.comment})
+        if self.validate_reject not in ("validate", "reject"):
+            raise ValidationError(self.env._("Choose an approval or rejection action."))
+        rec.check_access("read")
+        sequences = rec._get_sequences_to_approve(self.env.user)
+        eligible = rec.review_ids.filtered(
+            lambda review: (
+                review.status == "pending"
+                and self.env.user in review.reviewer_ids
+                and (
+                    review.sequence in sequences
+                    or (
+                        self.validate_reject == "validate"
+                        and review.approve_sequence_bypass
+                    )
+                )
+            )
+        )
+        if not self.review_ids or self.review_ids - eligible:
+            raise AccessError(
+                self.env._(
+                    "Only your available reviews on this document "
+                    "may receive a decision."
+                )
+            )
+        self.review_ids._with_review_token().write({"comment": self.comment})
         if self.validate_reject == "validate":
             rec._validate_tier(self.review_ids)
         if self.validate_reject == "reject":

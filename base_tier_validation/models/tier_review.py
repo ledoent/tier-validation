@@ -5,9 +5,11 @@ import logging
 from collections import defaultdict
 
 from odoo import api, fields, models
-from odoo.exceptions import ValidationError
+from odoo.exceptions import AccessError, ValidationError
 
 _logger = logging.getLogger(__name__)
+
+_REVIEW_TOKEN = object()
 
 
 class TierReview(models.Model):
@@ -69,6 +71,33 @@ class TierReview(models.Model):
         related="definition_id.approve_sequence_bypass"
     )
     last_reminder_date = fields.Datetime(readonly=True)
+
+    def _with_review_token(self):
+        return self.with_context(tier_review_token=_REVIEW_TOKEN)
+
+    def _check_review_mutation(self):
+        if (
+            not self.env.su
+            and self.env.context.get("tier_review_token") is not _REVIEW_TOKEN
+        ):
+            raise AccessError(
+                self.env._(
+                    "Use the document's tier validation actions to change reviews."
+                )
+            )
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        self._check_review_mutation()
+        return super().create(vals_list)
+
+    def write(self, vals):
+        self._check_review_mutation()
+        return super().write(vals)
+
+    def unlink(self):
+        self._check_review_mutation()
+        return super().unlink()
 
     @api.depends("status")
     def _compute_display_status(self):
@@ -146,7 +175,9 @@ class TierReview(models.Model):
         # Be sure to explicitely call the method afterwards.
         if self.env.context.get("tier_validation_defer_compute_can_review"):
             return
-        reviews = self.filtered(lambda rev: rev.status in ["waiting", "pending"])
+        reviews = self._with_review_token().filtered(
+            lambda rev: rev.status in ["waiting", "pending"]
+        )
         if not reviews:
             return
         # Lowest still-open sequence *per record*, computed over the whole
@@ -275,7 +306,7 @@ class TierReview(models.Model):
         return self.env._("A review has been requested %s days ago.", delay)
 
     def _send_review_reminder(self):
-        for rev in self:
+        for rev in self._with_review_token():
             record = self.env[rev.model].browse(rev.res_id)
             if not record.exists():  # <-- skip orphaned reviews
                 continue
